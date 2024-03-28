@@ -1,22 +1,3 @@
-/*
-	Copyright 2019 Benjamin Vedder	benjamin@vedder.se
-
-	This file is part of the VESC firmware.
-
-	The VESC firmware is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    The VESC firmware is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-    */
-
 #include "app.h"
 #include "ch.h"
 #include "hal.h"
@@ -35,6 +16,10 @@
 #include <string.h>
 #include <stdio.h>
 
+#define MIN_MS_WITHOUT_POWER			500
+#define FILTER_SAMPLES					5
+#define RPM_FILTER_SAMPLES				8
+
 // Threads
 static THD_FUNCTION(my_thread, arg);
 static THD_WORKING_AREA(my_thread_wa, 1024);
@@ -46,6 +31,10 @@ static void terminal_test(int argc, const char **argv);
 // Private variables
 static volatile bool stop_now = true;
 static volatile bool is_running = false;
+static volatile adc_config config;
+static volatile float ms_without_power = 0.0;
+static volatile float read_voltage = 0.0;
+static volatile bool range_ok = true;
 
 // Called when the custom application is started. Start our
 // threads here and set up callbacks.
@@ -77,40 +66,105 @@ void app_custom_stop(void) {
 }
 
 void app_custom_configure(app_configuration *conf) {
-	(void)conf;
+	// (void)conf;
+	config = conf->app_adc_conf;
+	ms_without_power = 0.0;
 }
 
 static THD_FUNCTION(my_thread, arg) {
 	(void)arg;
 
-	chRegSetThreadName("App Takis");
+	chRegSetThreadName("App Custom Idle");
 
 	is_running = true;
 
-	// Example of using the experiment plot
-//	chThdSleepMilliseconds(8000);
-//	commands_init_plot("Sample", "Voltage");
-//	commands_plot_add_graph("Temp Fet");
-//	commands_plot_add_graph("Input Voltage");
-//	float samp = 0.0;
-//
-//	for(;;) {
-//		commands_plot_set_graph(0);
-//		commands_send_plot_points(samp, mc_interface_temp_fet_filtered());
-//		commands_plot_set_graph(1);
-//		commands_send_plot_points(samp, GET_INPUT_VOLTAGE());
-//		samp++;
-//		chThdSleepMilliseconds(10);
-//	}
-
 	for(;;) {
+
+		systime_t sleep_time = CH_CFG_ST_FREQUENCY / config.update_rate_hz;
+		// At least one tick should be slept to not block the other threads
+		if (sleep_time == 0) {
+			sleep_time = 1;
+		}
+		chThdSleep(sleep_time);
+
 		// Check if it is time to stop.
 		if (stop_now) {
 			is_running = false;
 			return;
 		}
 
+		// Read the external ADC pin voltage
+		float pwr = ADC_VOLTS(ADC_IND_EXT);
+
+		// Read voltage and range check
+		static float read_filter = 0.0;
+		UTILS_LP_MOVING_AVG_APPROX(read_filter, pwr, FILTER_SAMPLES);
+
+		float read_voltage = 0.0;
+		if (config.use_filter) {
+			read_voltage = read_filter;
+		} else {
+			read_voltage = pwr;
+		}
+
+		// This needs fixing for the button press that shortcuts ADC to GND
+		range_ok = read_voltage >= config.voltage_min && read_voltage <= config.voltage_max;
+
+		pwr = utils_map(pwr, config.voltage_start, config.voltage_end, 0.0, 1.0);
+
+		// Optionally apply a filter
+		static float pwr_filter = 0.0;
+		UTILS_LP_MOVING_AVG_APPROX(pwr_filter, pwr, FILTER_SAMPLES);
+
+		if (config.use_filter) {
+			pwr = pwr_filter;
+		}
+
+		// Truncate the read voltage
+		utils_truncate_number(&pwr, 0.0, 1.0);
+
+		// Optionally invert the read voltage
+		if (config.voltage_inverted) {
+			pwr = 1.0 - pwr;
+		}		
+
+		// All pins and buttons are still decoded for debugging, even
+		// when output is disabled.
+		if (app_is_output_disabled()) {
+			continue;
+		}
+
+		// Apply deadband
+		utils_deadband(&pwr, config.hyst, 1.0);
+
+		// Apply a power curve map to the pwr value
+		// Map the pwr value from 0.0-1.0 to min and max Amps
+		// TODO: Implement
+		pwr = pwr * 20.0f;
+
+		// Apply ramping
+		static systime_t last_time = 0;
+		static float pwr_ramp = 0.0;
+		float ramp_time = fabsf(pwr) > fabsf(pwr_ramp) ? config.ramp_time_pos : config.ramp_time_neg;
+
+		if (ramp_time > 0.01) {
+			const float ramp_step = (float)ST2MS(chVTTimeElapsedSinceX(last_time)) / (ramp_time * 1000.0);
+			utils_step_towards(&pwr_ramp, pwr, ramp_step);
+			last_time = chVTGetSystemTimeX();
+			pwr = pwr_ramp;
+		}
+
+		float current_rel = 0.0;
+		const volatile mc_configuration *mcconf = mc_interface_get_configuration();
+		const float rpm_now = mc_interface_get_rpm();
+
+		current_rel = pwr;
+
 		timeout_reset(); // Reset timeout if everything is OK.
+
+		mc_interface_set_current_rel(current_rel);
+
+
 
 		// Run your logic here. A lot of functionality is available in mc_interface.h.
 
@@ -141,7 +195,6 @@ static THD_FUNCTION(my_thread, arg) {
 		// 	DoControl();
 		// }
 
-		chThdSleepMilliseconds(10);
 	}
 }
 
