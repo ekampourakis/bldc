@@ -1,37 +1,31 @@
+// ToDo
+// ***	Implement temperature based fan control
+// *	Fix compiler double promotion warning
+
 #include "app.h"
 #include "ch.h"
 #include "hal.h"
-
-// Some useful includes
+#include "stm32f4xx_conf.h"
 #include "mc_interface.h"
-#include "utils_math.h"
-#include "encoder/encoder.h"
-#include "terminal.h"
+#include "timeout.h"
+#include "utils.h"
 #include "comm_can.h"
 #include "hw.h"
-#include "commands.h"
-#include "timeout.h"
-
 #include <math.h>
-#include <string.h>
-#include <stdio.h>
+#include "conf_general.h"
 
-#define MIN_MS_WITHOUT_POWER			500
-#define FILTER_SAMPLES					5
-#define RPM_FILTER_SAMPLES				8
+#ifdef MCCONF_DEFAULT_USER
+#include MCCONF_DEFAULT_USER
+#endif
+
+#ifdef APP_CUSTOM_TO_USE
 
 // Threads
-static THD_FUNCTION(my_thread, arg);
-static THD_WORKING_AREA(my_thread_wa, 1024);
-
-// Private functions
-static void pwm_callback(void);
-static void terminal_test(int argc, const char **argv);
-
-// Private variables
+static THD_FUNCTION(custom_thread, arg);
+static THD_WORKING_AREA(custom_thread_wa, 1024);
+// Thread variables
 static volatile bool stop_now = true;
 static volatile bool is_running = false;
-
 static volatile custom_config config;
 
 // App variables
@@ -47,6 +41,7 @@ static bool PreviousFault = true;			// Consider fault codes cleared on boot
 static bool IsStarting = true;				// Consider motor stopped on boot
 static float CurrentRPM = 0.0;
 static int PeakPower = 0;
+static float FanDuty = 0.0;
 
 // Included below and with specific order due to variable dependencies
 // It is important to include .c files instead of .h files to avoid compile errors
@@ -56,42 +51,29 @@ static volatile drive_modes drivemode; // = C_DefaultDriveMode;			// Set the dri
 #include "buttons.c"
 #include "curves.c"
 
-// Called when the custom application is started. Start our
-// threads here and set up callbacks.
+// Required app functions
 void app_custom_start(void) {
 	read_voltage = ThrottleMinVoltage - 0.001;
 	drivemode = C_DefaultDriveMode;
-
-	mc_interface_set_pwm_callback(pwm_callback);
-
 	stop_now = false;
-	chThdCreateStatic(my_thread_wa, sizeof(my_thread_wa),
-			NORMALPRIO, my_thread, NULL);
-
-	// Terminal commands for the VESC Tool terminal can be registered.
-	terminal_register_command_callback(
-			"takis",
-			"Print the number d",
-			"[d]",
-			terminal_test);
+	chThdCreateStatic(custom_thread_wa, sizeof(custom_thread_wa), NORMALPRIO, custom_thread, NULL);
 }
-
-// Called when the custom application is stopped. Stop our threads
-// and release callbacks.
 void app_custom_stop(void) {
-	mc_interface_set_pwm_callback(0);
-	terminal_unregister_callback(terminal_test);
-
 	stop_now = true;
 	while (is_running) {
+		// Allow other threads to run on dead time
 		chThdSleepMilliseconds(1);
 	}
 }
-
-void app_custom_configure(app_configuration *conf) {
-	// (void)conf;
-	config = conf->custom_conf;
+void app_custom_configure(custom_config *conf) {
+	config = *conf;
+	//drivemode = config.DefaultDriveMode;
 }
+bool app_custom_running() {
+	return is_running;
+}
+
+// Custom control functions
 
 bool ProcessThread() {
 	// Sleep for a time according to the specified rate
@@ -131,7 +113,7 @@ void ProcessBattery() {
 		// Convert battery voltage to LED blinks for battery indication
 		// Below code cannot be replaced with a single map function cause battery discharge is not linear
 		if (BatteryVoltage >= Battery4Blinks) {
-			BatteryLevel = utils_map(BatteryVoltage, Battery4Blinks, MCCONF_L_MAX_VOLTAGE, 0.75, 1.0);
+			BatteryLevel = utils_map(BatteryVoltage, Battery4Blinks, MCCONF_L_BATTERY_CHARGED, 0.75, 1.0);
 		}
 		else if (BatteryVoltage >= Battery3Blinks) {
 			BatteryLevel = utils_map(BatteryVoltage, Battery3Blinks, Battery4Blinks, 0.5, 0.75);
@@ -193,17 +175,17 @@ void ProcessTemperature() {
 	for (int i = 0; i < TEMP_FILTER_SAMPLES; i++) {
 		temp_filtered_fet += filter_buffer_temp_fet[i];
 	}
-	// // Set fan duty cycle depending on the motor temperature
-	// if (temp_filtered_motor < 29.0 && temp_filtered_fet < 29.0) {
-	// 	FanDuty = 0.0;
-	// 	set_pw(0.0);
-	// } 
-	// if (temp_filtered_motor >= 30.0 || temp_filtered_fet >= 30.0) {
-	// 	float required_fan = utils_map(temp_filtered_motor, 30.0, 70.0, 2000.0, 3000.0);
-	// 	utils_truncate_number(&required_fan, 2000.0, 3000.0);
-	// 	FanDuty = utils_map(required_fan, 2000.0, 3000.0, 0.0, 1.0);
-	// 	set_pw(required_fan);
-	// }
+	// Set fan duty cycle depending on the motor temperature
+	if (temp_filtered_motor < 29.0 && temp_filtered_fet < 29.0) {
+		FanDuty = 0.0;
+		set_pw(0.0);
+	} 
+	if (temp_filtered_motor >= 30.0 || temp_filtered_fet >= 30.0) {
+		float required_fan = utils_map(temp_filtered_motor, 30.0, 70.0, 2000.0, 3000.0);
+		utils_truncate_number(&required_fan, 2000.0, 3000.0);
+		FanDuty = utils_map(required_fan, 2000.0, 3000.0, 0.0, 1.0);
+		set_pw(required_fan);
+	}
 }
 
 void ProcessThrottle() {
@@ -237,7 +219,7 @@ void ProcessThrottle() {
 		// Set throttle deadband depending on current state
 		deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Cruise : config.DeadBand_Cruise;
 		break;
-	case DRIVE_MODE_RACE:
+	case	DRIVE_MODE_RACE:
 		// Apply race mode throttle curve
 		CurrentThrottle = ThrottleCurve_Race(CurrentThrottle);
 		// Limit maximum power output based on race power curve only if we are already moving
@@ -419,9 +401,9 @@ void DoControl() {
 					StopMotor();
 				}
 			} else {
-				if (CurrentRPM > C_MinIdleRPM) {
+				if (CurrentRPM > MCCONF_S_PID_MIN_RPM) {
 					// Give minimum amperage above minimum ERPM
-					mc_interface_set_current(C_IdleCurrentLimit);
+					mc_interface_set_current(MCCONF_CC_MIN_CURRENT);
 				} else {
 					// Lock motor in case of ERPM drop
 					StopMotor();
@@ -436,15 +418,18 @@ void DoControl() {
 	}
 }
 
+// Thread
 
-static THD_FUNCTION(my_thread, arg) {
-	(void)arg;
-
-	chRegSetThreadName("App Custom Idle");
-
+static THD_FUNCTION(custom_thread, arg) {
+	// Prepare the thread
+	(void) arg;
+	chRegSetThreadName("APP_CUSTOM");
+	//palSetPadMode(HW_ICU_GPIO, HW_ICU_PIN, PAL_MODE_INPUT_PULLUP);
 	is_running = true;
-
-	for(;;) {
+	chThdSleep(MS2ST(2500));
+	set_pw(0.0);
+	// Run continuously
+	for (;;) {
 		// Do the necessary thread keeping
 		if (!ProcessThread()) return;
 
@@ -480,26 +465,4 @@ static THD_FUNCTION(my_thread, arg) {
 	}
 }
 
-static void pwm_callback(void) {
-	// Called for every control iteration in interrupt context.
-}
-
-// Callback function for the terminal command with arguments.
-static void terminal_test(int argc, const char **argv) {
-	if (argc == 2) {
-		int d = -1;
-		sscanf(argv[1], "%d", &d);
-
-		if (d == 69) {
-			commands_printf("Noice");
-		} else {
-			commands_printf("Takis have entered %d", d);
-		}
-
-		// For example, read the ADC inputs on the COMM header.
-		commands_printf("ADC1: %.2f V ADC2: %.2f V",
-				(double)ADC_VOLTS(ADC_IND_EXT), (double)ADC_VOLTS(ADC_IND_EXT2));
-	} else {
-		commands_printf("This command requires one argument.\n");
-	}
-}
+#endif

@@ -151,7 +151,7 @@
 #define MCCONF_S_PID_MIN_RPM			900.0	// Minimum allowed RPM
 #endif
 #ifndef MCCONF_S_PID_ALLOW_BRAKING
-#define MCCONF_S_PID_ALLOW_BRAKING		true	// Allow braking in speed control mode
+#define MCCONF_S_PID_ALLOW_BRAKING		false	// Allow braking in speed control mode
 #endif
 #ifndef MCCONF_S_PID_RAMP_ERPMS_S
 #define MCCONF_S_PID_RAMP_ERPMS_S		25000.0	// Speed input ramping, in ERPM/s
