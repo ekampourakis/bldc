@@ -2,6 +2,8 @@
 #include "ch.h"
 #include "hal.h"
 
+// TODO: Replace all MC_ macros with custom configuration values
+
 // Some useful includes
 #include "mc_interface.h"
 #include "utils_math.h"
@@ -71,7 +73,7 @@ void app_custom_start(void) {
 	// Terminal commands for the VESC Tool terminal can be registered.
 	terminal_register_command_callback(
 			"takis",
-			"Print the number d",
+			"Do commands based on number d",
 			"[d]",
 			terminal_test);
 }
@@ -91,6 +93,12 @@ void app_custom_stop(void) {
 void app_custom_configure(app_configuration *conf) {
 	// (void)conf;
 	config = conf->custom_conf;
+	// Configure the pins GPIOC 10 & 11 as output for the LED
+	// palSetPadMode(TxGpioPort[port_number], TxGpioPin[port_number], PAL_MODE_INPUT);
+	// palSetPadMode(RxGpioPort[port_number], RxGpioPin[port_number], PAL_MODE_INPUT);
+	palSetPadMode(GPIOC, 10, PAL_MODE_OUTPUT_PUSHPULL);
+	palSetPadMode(GPIOC, 11, PAL_MODE_OUTPUT_PUSHPULL);
+
 }
 
 bool ProcessThread() {
@@ -413,7 +421,7 @@ void DoControl() {
 			if (FilteredThrottle > 0.01) {
 				if (CurrentRPM >= config.NegativeERPMLimit) {
 					// Give power to motor
-					mc_interface_set_current(FilteredThrottle * MCCONF_L_CURRENT_MAX);
+					mc_interface_set_current(FilteredThrottle * C_MaxCurrent);
 				} else {
 					// Stop motor below negative ERPM limit to avoid reverse braking
 					StopMotor();
@@ -495,10 +503,41 @@ static void terminal_test(int argc, const char **argv) {
 		} else {
 			commands_printf("Takis have entered %d", d);
 		}
+		int batt;
+		switch (d) {
+		case 1:
+			// Do something
+			palSetPad(GPIOC, 10);
+			commands_printf("LED ON GPIOC10");
+			break;
+		case 2:
+			// Do something else
+			palClearPad(GPIOC, 10);
+			commands_printf("LED OFF GPIOC10");
+			break;
+		case 3:
+			// Do something else
+			palSetPad(GPIOC, 11);
+			commands_printf("LED ON GPIOC11");
+			break;
+		case 4:
+			// Do something else
+			palClearPad(GPIOC, 11);
+			commands_printf("LED OFF GPIOC11");
+			break;
+		case 5:
+			// Do something else
+			batt = round(utils_map(BatteryLevel, 0.0, 1.0, 10.0, 40.0) / 10.0);
+			commands_printf("Battery level: %d Blinks @ %.2f Percent Charge", batt, BatteryLevel * 100);
+			break;
+		default:
+			commands_printf("Invalid command d.");
+			break;
+		}
 
-		// For example, read the ADC inputs on the COMM header.
-		commands_printf("ADC1: %.2f V ADC2: %.2f V",
-				(double)ADC_VOLTS(ADC_IND_EXT), (double)ADC_VOLTS(ADC_IND_EXT2));
+		// // For example, read the ADC inputs on the COMM header.
+		// commands_printf("ADC1: %.2f V ADC2: %.2f V",
+		// 		(double)ADC_VOLTS(ADC_IND_EXT), (double)ADC_VOLTS(ADC_IND_EXT2));
 	} else {
 		commands_printf("This command requires one argument.\n");
 	}

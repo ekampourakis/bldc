@@ -43,6 +43,7 @@
 
 #define C_MinIdleRPM            5000	// Minimum ERPM to consider motor running
 #define C_IdleCurrentLimit		5.0		// Idle Current Amps
+#define C_MaxCurrent 120.0
 
 // Button settings
 //
@@ -82,8 +83,8 @@
 
 // LED Macros
 //
-#define THROTTLE_LED_ON()		palSetPad(GPIOB, 10)		// Set pin PB7 to logical high
-#define THROTTLE_LED_OFF()		palClearPad(GPIOB, 10)	// Set pin PB7 to logical low
+#define THROTTLE_LED_ON()		palSetPad(GPIOC, 10)		// Set pin PB7 to logical high
+#define THROTTLE_LED_OFF()		palClearPad(GPIOC, 10)	// Set pin PB7 to logical low
 
 
 // Function declarations
