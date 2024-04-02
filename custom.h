@@ -48,8 +48,8 @@
 // Button settings
 //
 #define ButtonMaxVoltage	0.3		// Below that voltage button is considered pressed
-#define ThrottleMinVoltage	0.6		// Zero level of throttle
-#define ThrottleMaxVoltage	1.7		// Full level of throttle
+#define ThrottleMinVoltage	1.0		// Zero level of throttle
+#define ThrottleMaxVoltage	2.5		// Full level of throttle
 #define ShortPressTime		40		// Minimum time at which a short press is triggered (in mS)
 #define MaxShortPressTime	400		// Maximum time at which a short press is triggered (in mS)
 #define AllowLongPress		true	// Allow long press
@@ -68,7 +68,7 @@
 // LED timing
 #define BatteryBlinkInterval 	3500	// Wait X milliseconds before indicating battery again
 #define BatteryBlinkDelay 		350		// How long the LED stays on/off while indicating battery (in mS)
-#define FastBlinkDelay			100		// How long the LED stays on/off while fast blinking (in mS)
+#define FastBlinkDelay			200		// How long the LED stays on/off while fast blinking (in mS)
 #define BlinkDelay	            500 	// How long the LED stays on/off while low battery blinking (in mS)
 
 

@@ -97,8 +97,8 @@ void app_custom_configure(app_configuration *conf) {
 	// palSetPadMode(TxGpioPort[port_number], TxGpioPin[port_number], PAL_MODE_INPUT);
 	// palSetPadMode(RxGpioPort[port_number], RxGpioPin[port_number], PAL_MODE_INPUT);
 	palSetPadMode(GPIOC, 10, PAL_MODE_OUTPUT_PUSHPULL);
-	palSetPadMode(GPIOC, 11, PAL_MODE_OUTPUT_PUSHPULL);
-
+	// palSetPadMode(GPIOC, 11, PAL_MODE_OUTPUT_PUSHPULL);
+	drivemode = config.DefaultDriveMode;
 }
 
 bool ProcessThread() {
@@ -216,7 +216,7 @@ void ProcessTemperature() {
 
 void ProcessThrottle() {
 	// Read input voltage
-	read_voltage = (float) ADC_Value[ADC_IND_EXT] * V_REG / 4095;
+	read_voltage = ADC_VOLTS(ADC_IND_EXT);
 	// Normalize the read voltage using running average filter
 	static float filter_buffer_throttle[FILTER_SAMPLES];
 	static int filter_ptr_throttle = 0;
@@ -234,58 +234,60 @@ void ProcessThrottle() {
 	utils_truncate_number(&CurrentThrottle, 0.0, 1.0);
 	// Apply throttle curve depending on drive mode
 	// Apply maximum power curves depending on drive mode only if variable ramping is not active
-	switch (drivemode) {
-	case DRIVE_MODE_CRUISE:
-		// Apply cruise mode throttle curve
-		CurrentThrottle = ThrottleCurve_Cruise(CurrentThrottle);
-		// Limit maximum power output based on race power curve only if we are already moving
-		utils_truncate_number(&CurrentThrottle, 0.0, IsStarting ? 1.0 : PowerCurve_Cruise(CurrentRPM));
-		// Set race ramping time
-		ramp = config.Ramp_Cruise;
-		// Set throttle deadband depending on current state
-		deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Cruise : config.DeadBand_Cruise;
-		break;
-	case DRIVE_MODE_RACE:
-		// Apply race mode throttle curve
-		CurrentThrottle = ThrottleCurve_Race(CurrentThrottle);
-		// Limit maximum power output based on race power curve only if we are already moving
-		utils_truncate_number(&CurrentThrottle, 0.0, IsStarting ? 1.0 : PowerCurve_Race(CurrentRPM));
-		// Set cruise ramping time
-		ramp = config.Ramp_Race;
-		// Set throttle deadband depending on current state
-		deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Race : config.DeadBand_Race;
-		break;
-	}
+	// switch (drivemode) {
+	// case DRIVE_MODE_CRUISE:
+	// 	// Apply cruise mode throttle curve
+	// 	CurrentThrottle = ThrottleCurve_Cruise(CurrentThrottle);
+	// 	// Limit maximum power output based on race power curve only if we are already moving
+	// 	utils_truncate_number(&CurrentThrottle, 0.0, IsStarting ? 1.0 : PowerCurve_Cruise(CurrentRPM));
+	// 	// Set race ramping time
+	// 	ramp = config.Ramp_Cruise;
+	// 	// Set throttle deadband depending on current state
+	// 	deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Cruise : config.DeadBand_Cruise;
+	// 	break;
+	// case DRIVE_MODE_RACE:
+	// 	// Apply race mode throttle curve
+	// 	CurrentThrottle = ThrottleCurve_Race(CurrentThrottle);
+	// 	// Limit maximum power output based on race power curve only if we are already moving
+	// 	utils_truncate_number(&CurrentThrottle, 0.0, IsStarting ? 1.0 : PowerCurve_Race(CurrentRPM));
+	// 	// Set cruise ramping time
+	// 	ramp = config.Ramp_Race;
+	// 	// Set throttle deadband depending on current state
+	// 	deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Race : config.DeadBand_Race;
+	// 	break;
+	// }
+	ramp = config.Ramp_Cruise;
+	deadband = config.DeadBand_Cruise;
 	// Apply throttle deadband
 	if (CurrentThrottle < deadband) {
 		CurrentThrottle = 0.0;
 	}
 	// If we are starting from a standstill
-	if (IsStarting) {
-		// Smart ramping
-		if (config.UseVariableRamping && CurrentRPM <= config.LowToHighERPM) {
-			// Calculate variable ramp time
-			float smart_ramp = utils_map(CurrentRPM, 0, config.LowToHighERPM, config.RampingMultiplier * ramp, ramp);
-			// Normalize and set variable ramp time
-			utils_truncate_number(&smart_ramp, config.RampingMultiplier * ramp, ramp);
-			ramp = smart_ramp;
-		}		
-		// If we are in the slow phase of starting
-		if (CurrentRPM <= config.LowAmpLimitERPM) {
-			// Limit maximum current to LowAmpLimit
-			utils_truncate_number(&CurrentThrottle, 0.0, config.LowAmpLimit / MCCONF_L_CURRENT_MAX);
-		}
-		// If we are in the smoothing phase of starting
-		if (CurrentRPM > config.LowAmpLimitERPM && CurrentRPM <= config.LowToHighERPM) {
-			// Limit maximum current with linear smoothing so it won't violently deliver maximum power after starting
-			float max_amps = utils_map(CurrentRPM, config.LowAmpLimitERPM, config.LowToHighERPM, config.LowAmpLimit, MCCONF_L_CURRENT_MAX);
-			if (config.UseDynamicThrottle) {
-				// Map throttle in maximum range to avoid violent jerking
-				CurrentThrottle = utils_map(CurrentThrottle, 0.0, 1.0, deadband, max_amps / MCCONF_L_CURRENT_MAX);
-			}
-			utils_truncate_number(&CurrentThrottle, 0.0, max_amps / MCCONF_L_CURRENT_MAX);
-		}
-	}
+	// if (IsStarting) {
+	// 	// Smart ramping
+	// 	if (config.UseVariableRamping && CurrentRPM <= config.LowToHighERPM) {
+	// 		// Calculate variable ramp time
+	// 		float smart_ramp = utils_map(CurrentRPM, 0, config.LowToHighERPM, config.RampingMultiplier * ramp, ramp);
+	// 		// Normalize and set variable ramp time
+	// 		utils_truncate_number(&smart_ramp, config.RampingMultiplier * ramp, ramp);
+	// 		ramp = smart_ramp;
+	// 	}		
+	// 	// If we are in the slow phase of starting
+	// 	if (CurrentRPM <= config.LowAmpLimitERPM) {
+	// 		// Limit maximum current to LowAmpLimit
+	// 		utils_truncate_number(&CurrentThrottle, 0.0, config.LowAmpLimit / MCCONF_L_CURRENT_MAX);
+	// 	}
+	// 	// If we are in the smoothing phase of starting
+	// 	if (CurrentRPM > config.LowAmpLimitERPM && CurrentRPM <= config.LowToHighERPM) {
+	// 		// Limit maximum current with linear smoothing so it won't violently deliver maximum power after starting
+	// 		float max_amps = utils_map(CurrentRPM, config.LowAmpLimitERPM, config.LowToHighERPM, config.LowAmpLimit, MCCONF_L_CURRENT_MAX);
+	// 		if (config.UseDynamicThrottle) {
+	// 			// Map throttle in maximum range to avoid violent jerking
+	// 			CurrentThrottle = utils_map(CurrentThrottle, 0.0, 1.0, deadband, max_amps / MCCONF_L_CURRENT_MAX);
+	// 		}
+	// 		utils_truncate_number(&CurrentThrottle, 0.0, max_amps / MCCONF_L_CURRENT_MAX);
+	// 	}
+	// }
 	// Move throttle towards set goal with maximum step
 	if (CurrentThrottle < FilteredThrottle) {
 		//ramp = ramp * 2;
@@ -334,8 +336,7 @@ void DoBlink() {
 			// If motor is not running
 			if (mc_interface_get_state() == MC_STATE_OFF) {
 				BatteryBlink(BatteryLevel);
-			}
-			else {
+			} else {
 				// Reset battery indicator
 				BlinksLeft = 0;
 				// Depending on race mode blink LED or keep it off
@@ -350,6 +351,7 @@ void DoBlink() {
 					}
 					break;
 				}
+				FastBlink();
 			}
 		}
 		else {
@@ -359,7 +361,8 @@ void DoBlink() {
 	}
 	else {
 		// Fault codes are a priority
-		FaultBlink();
+		// FaultBlink();
+		LowBatteryBlink();
 	}
 }
 
@@ -457,7 +460,7 @@ static THD_FUNCTION(my_thread, arg) {
 		if (!ProcessThread()) return;
 
 		// Process button patterns
-		ProcessButtons();
+		// ProcessButtons();
 
 		// Measure battery level
 		ProcessBattery();
@@ -466,22 +469,49 @@ static THD_FUNCTION(my_thread, arg) {
 		ProcessRPM();
 
 		// Process motor temperature
-		ProcessTemperature();
+		// ProcessTemperature();
 
 		// Process throttle input
-		ProcessThrottle();
+		// ProcessThrottle();
+		float pwr = ADC_VOLTS(ADC_IND_EXT);
+		// Read voltage and range check
+		static float read_filter = 0.0;
+		UTILS_LP_MOVING_AVG_APPROX(read_filter, pwr, 5);
+		read_voltage = read_filter;
+		pwr = utils_map(pwr, ThrottleMinVoltage, ThrottleMaxVoltage, 0.0, 1.0);
+		static float pwr_filter = 0.0;
+		UTILS_LP_MOVING_AVG_APPROX(pwr_filter, pwr, FILTER_SAMPLES);
+		pwr = pwr_filter;
+		// Truncate the read voltage
+		utils_truncate_number(&pwr, 0.0, 1.0);
+		// Apply deadband
+		utils_deadband(&pwr, C_DeadBand_Cruise, 1.0);
+		CurrentThrottle = pwr;
 
-		if (config.UsePowerCruise && !CruiseControlActive) {
-			// Process applied power for power cruise control
-			ProcessPower();
-		}
+		// if (config.UsePowerCruise && !CruiseControlActive) {
+		// 	// Process applied power for power cruise control
+		// 	ProcessPower();
+		// }
 		// Blink the LED based on current status
 		DoBlink();
 
-		if (mc_interface_get_fault() == FAULT_CODE_NONE) {
+		// if (mc_interface_get_fault() == FAULT_CODE_NONE) {
 			// Control motor only if no faults are present
-			DoControl();
-		}
+			// DoControl();
+			// If throttle input is active
+			if (pwr > 0.01) {
+					StartMotor();
+					mc_interface_set_current_rel(pwr);
+			} else {
+				if (CurrentRPM > C_MinIdleRPM) {
+					// Give minimum amperage above minimum ERPM
+					mc_interface_set_current(C_IdleCurrentLimit);
+				} else {
+					// Lock motor in case of ERPM drop
+					StopMotor();
+				}
+			}
+		// }
 
 		// Reset thread timeout. Used to avoid blocking threads.
 		timeout_reset();
@@ -517,13 +547,11 @@ static void terminal_test(int argc, const char **argv) {
 			break;
 		case 3:
 			// Do something else
-			palSetPad(GPIOC, 11);
-			commands_printf("LED ON GPIOC11");
+			commands_printf("Current Throttle: %.2f", CurrentThrottle);
 			break;
 		case 4:
 			// Do something else
-			palClearPad(GPIOC, 11);
-			commands_printf("LED OFF GPIOC11");
+			commands_printf("Current RPM: %.2f", CurrentRPM);
 			break;
 		case 5:
 			// Do something else
