@@ -707,23 +707,23 @@ typedef enum {
 typedef struct {
 	int CruiseControlERPM;
 	int NegativeERPMLimit;
-	bool UsePowerCruise;
-	int MaxCruisePower;
-	bool UseDriveModes;
-	drive_modes DefaultDriveMode;
-	float DeadBand_Cruise;
-	float DeadBand_Race;
+	// bool UsePowerCruise;
+	// int MaxCruisePower;
+	// bool UseDriveModes;
+	// drive_modes DefaultDriveMode;
+	// float DeadBand_Cruise;
+	// float DeadBand_Race;
 	int LowAmpLimitERPM; 
 	float LowAmpLimit;
 	int LowToHighERPM;
 	bool UseVariableRamping;
 	float RampingMultiplier;
-	float Ramp_Cruise;
-	float Ramp_Race;
-	bool UseDynamicThrottle;
-	bool UseDynamicPower;
-	float DynamicDeadband_Cruise;
-	float DynamicDeadband_Race;
+	// float Ramp_Cruise;
+	// float Ramp_Race;
+	// bool UseDynamicThrottle;
+	// bool UseDynamicPower;
+	// float DynamicDeadband_Cruise;
+	// float DynamicDeadband_Race;
 } custom_config;
 
 // Nunchuk control types

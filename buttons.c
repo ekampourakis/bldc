@@ -31,13 +31,13 @@ void ShortPress() {
 			mc_interface_release_motor();
 		}
 		else {
+			mc_configuration* config = mc_interface_get_configuration();
 			// Only activate cruise control above minimum ERPMs
-			if (CurrentRPM > MCCONF_S_PID_MIN_RPM) {
+			// if (CurrentRPM > MCCONF_S_PID_MIN_RPM) {
+			if (CurrentRPM > config->s_pid_min_erpm) {
 				CruiseControlActive = true;
-				if (!config.UsePowerCruise) {
-					CruiseRPM = CurrentRPM;
-					mc_interface_set_pid_speed(CruiseRPM);
-				}	
+				CruiseRPM = CurrentRPM;
+				mc_interface_set_pid_speed(CruiseRPM);
 			}
 		}
 	}
@@ -45,20 +45,7 @@ void ShortPress() {
 }
 
 void LongPress() {
-	if (config.UseDriveModes) {
-		// Change drive mode
-		switch (drivemode) {
-		case DRIVE_MODE_CRUISE:
-			// Re-init to Race mode
-			drivemode = DRIVE_MODE_RACE;
-			break;
-		case DRIVE_MODE_RACE:
-			// Re-init to Cruise mode
-			drivemode = DRIVE_MODE_CRUISE;
-			break;
-		}
-		VisualizeButtonPress(BUTTON_PRESS_LONG);
-	}
+
 }
 
 void ContinuousPress() {

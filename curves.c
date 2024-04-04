@@ -26,14 +26,14 @@ float ThrottleCurve_Race(float Throttle) {
 	return Return;
 }
 
-
 // Convert ERPM value to fraction of max ERPMs
 float RPMToFraction(float ERPM, bool ConvertToPercent) {
 	float Result = ERPM;
 	// Limiting ERPM input to 0.0 will treat negative ERPM as starting from standstill
-	utils_truncate_number(&Result, 0.0, MCCONF_L_RPM_MAX);
+	mc_configuration* config = mc_interface_get_configuration();
+	utils_truncate_number(&Result, 0.0, config->l_max_erpm);
 	// Convert to fraction of max ERPM
-	Result /= MCCONF_L_RPM_MAX;
+	Result /= config->l_max_erpm;
 	// Contain in useful range
 	utils_truncate_number(&Result, 0.0, 1.0);
 	return (ConvertToPercent ? Result * 100.0 : Result);

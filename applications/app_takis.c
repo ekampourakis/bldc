@@ -35,6 +35,7 @@ static volatile bool stop_now = true;
 static volatile bool is_running = false;
 
 static volatile custom_config config;
+static volatile adc_config adc;
 
 // App variables
 static float deadband = 0.0;				// Deadband value is calculated on runtime
@@ -48,12 +49,15 @@ static bool MotorStopped = true;			// Consider motor locked on boot
 static bool PreviousFault = true;			// Consider fault codes cleared on boot
 static bool IsStarting = true;				// Consider motor stopped on boot
 static float CurrentRPM = 0.0;
-static int PeakPower = 0;
+static int CruiseRPM = 0;
+
+static volatile float ms_without_power = 0.0;
 
 // Included below and with specific order due to variable dependencies
 // It is important to include .c files instead of .h files to avoid compile errors
 static volatile float read_voltage; // = ThrottleMinVoltage - 0.001;	// Use this to avoid false button press on boot
-static volatile drive_modes drivemode; // = C_DefaultDriveMode;			// Set the drive mode to boot at
+static volatile bool range_ok;
+
 #include "custom.c"
 #include "buttons.c"
 #include "curves.c"
@@ -61,9 +65,6 @@ static volatile drive_modes drivemode; // = C_DefaultDriveMode;			// Set the dri
 // Called when the custom application is started. Start our
 // threads here and set up callbacks.
 void app_custom_start(void) {
-	read_voltage = ThrottleMinVoltage - 0.001;
-	drivemode = C_DefaultDriveMode;
-
 	mc_interface_set_pwm_callback(pwm_callback);
 
 	stop_now = false;
@@ -93,18 +94,25 @@ void app_custom_stop(void) {
 void app_custom_configure(app_configuration *conf) {
 	// (void)conf;
 	config = conf->custom_conf;
-	// Configure the pins GPIOC 10 & 11 as output for the LED
-	// palSetPadMode(TxGpioPort[port_number], TxGpioPin[port_number], PAL_MODE_INPUT);
-	// palSetPadMode(RxGpioPort[port_number], RxGpioPin[port_number], PAL_MODE_INPUT);
+	adc = conf->app_adc_conf;
+	// Init the LED PIN on TX2
 	palSetPadMode(GPIOC, 10, PAL_MODE_OUTPUT_PUSHPULL);
-	// palSetPadMode(GPIOC, 11, PAL_MODE_OUTPUT_PUSHPULL);
-	drivemode = config.DefaultDriveMode;
 }
 
 bool ProcessThread() {
 	// Sleep for a time according to the specified rate
-	systime_t sleep_time = CH_CFG_ST_FREQUENCY / RefreshRate;
+	systime_t sleep_time = CH_CFG_ST_FREQUENCY / adc.update_rate_hz;
 	chThdSleep(sleep_time == 0 ? 1 : sleep_time);
+
+	if (fabsf(CurrentThrottle) < 0.001) {
+		ms_without_power += (1000.0 * (float)sleep_time) / (float)CH_CFG_ST_FREQUENCY;
+	}
+
+	// For safe start when fault codes occur
+	if (mc_interface_get_fault() != FAULT_CODE_NONE && adc.safe_start != SAFE_START_NO_FAULT) {
+		ms_without_power = 0;
+	}
+
 	// If thread must be stopped
 	if (stop_now) {
 		// Stop the thread
@@ -118,28 +126,30 @@ void ProcessBattery() {
 	// Read, filter and map the battery voltage from the interface only if motor is not running
 	if (mc_interface_get_state() == MC_STATE_OFF) {
 		// Apply running average filter on battery voltage
-		static float filter_buffer_battery[BATTERY_FILTER_SAMPLES];
+		static float filter_buffer_battery[FILTER_SAMPLES];
 		static int filter_ptr_battery = 0;
 		filter_buffer_battery[filter_ptr_battery++] = GET_INPUT_VOLTAGE();
-		if (filter_ptr_battery >= BATTERY_FILTER_SAMPLES) {
+		if (filter_ptr_battery >= FILTER_SAMPLES) {
 			filter_ptr_battery = 0;
 		}
 		float battery_filtered = 0.0;
-		for (int i = 0; i < BATTERY_FILTER_SAMPLES; i++) {
+		for (int i = 0; i < FILTER_SAMPLES; i++) {
 			battery_filtered += filter_buffer_battery[i];
 		}
-		float BatteryVoltage = (battery_filtered / BATTERY_FILTER_SAMPLES);
+		float BatteryVoltage = (battery_filtered / FILTER_SAMPLES);
 		// Check for low battery or for battery charge
-		if (LowBattery && BatteryVoltage > MCCONF_L_BATTERY_CUT_START) {
+		mc_configuration *mcconf = mc_interface_get_configuration();
+		if (LowBattery && BatteryVoltage > mcconf->l_battery_cut_start) {
 			LowBattery = false;
 		}
-		if (!LowBattery && BatteryVoltage < MCCONF_L_BATTERY_CUT_END) {
+		if (!LowBattery && BatteryVoltage < mcconf->l_battery_cut_end) {
 			LowBattery = true;
 		}
 		// Convert battery voltage to LED blinks for battery indication
 		// Below code cannot be replaced with a single map function cause battery discharge is not linear
 		if (BatteryVoltage >= Battery4Blinks) {
-			BatteryLevel = utils_map(BatteryVoltage, Battery4Blinks, MCCONF_L_MAX_VOLTAGE, 0.75, 1.0);
+			// BatteryLevel = utils_map(BatteryVoltage, Battery4Blinks, MCCONF_L_MAX_VOLTAGE, 0.75, 1.0);
+			BatteryLevel = utils_map(BatteryVoltage, Battery4Blinks, mcconf->l_max_vin, 0.0, 1.0);
 		}
 		else if (BatteryVoltage >= Battery3Blinks) {
 			BatteryLevel = utils_map(BatteryVoltage, Battery3Blinks, Battery4Blinks, 0.5, 0.75);
@@ -148,7 +158,8 @@ void ProcessBattery() {
 			BatteryLevel = utils_map(BatteryVoltage, Battery2Blinks, Battery3Blinks, 0.25, 0.5);
 		}
 		else {
-			BatteryLevel = utils_map(BatteryVoltage, MCCONF_L_BATTERY_CUT_START, Battery2Blinks, 0.0, 0.25);
+			// BatteryLevel = utils_map(BatteryVoltage, MCCONF_L_BATTERY_CUT_START, Battery2Blinks, 0.0, 0.25);
+			BatteryLevel = utils_map(BatteryVoltage, mcconf->l_battery_cut_start, Battery2Blinks, 0.0, 0.25);
 		}
 		utils_truncate_number(&BatteryLevel, 0.0, 1.0);
 	}
@@ -178,154 +189,134 @@ void ProcessRPM() {
 	}
 }
 
-void ProcessTemperature() {
-	// Read and normalize motor temperature using running average filter
-	static float filter_buffer_temp_motor[TEMP_FILTER_SAMPLES];
-	static int filter_ptr_temp_motor = 0;
-	filter_buffer_temp_motor[filter_ptr_temp_motor++] = mc_interface_temp_motor_filtered();
-	if (filter_ptr_temp_motor >= TEMP_FILTER_SAMPLES) {
-		filter_ptr_temp_motor = 0;
-	}
-	float temp_filtered_motor = 0.0;
-	for (int i = 0; i < TEMP_FILTER_SAMPLES; i++) {
-		temp_filtered_motor += filter_buffer_temp_motor[i];
-	}
-	// Read and normalize FET temperatures using running average filter
-	static float filter_buffer_temp_fet[TEMP_FILTER_SAMPLES];
-	static int filter_ptr_temp_fet = 0;
-	filter_buffer_temp_fet[filter_ptr_temp_fet++] = mc_interface_temp_fet_filtered();
-	if (filter_ptr_temp_fet >= TEMP_FILTER_SAMPLES) {
-		filter_ptr_temp_fet = 0;
-	}
-	float temp_filtered_fet = 0.0;
-	for (int i = 0; i < TEMP_FILTER_SAMPLES; i++) {
-		temp_filtered_fet += filter_buffer_temp_fet[i];
-	}
-	// // Set fan duty cycle depending on the motor temperature
-	// if (temp_filtered_motor < 29.0 && temp_filtered_fet < 29.0) {
-	// 	FanDuty = 0.0;
-	// 	set_pw(0.0);
-	// } 
-	// if (temp_filtered_motor >= 30.0 || temp_filtered_fet >= 30.0) {
-	// 	float required_fan = utils_map(temp_filtered_motor, 30.0, 70.0, 2000.0, 3000.0);
-	// 	utils_truncate_number(&required_fan, 2000.0, 3000.0);
-	// 	FanDuty = utils_map(required_fan, 2000.0, 3000.0, 0.0, 1.0);
-	// 	set_pw(required_fan);
-	// }
-}
+// void ProcessThrottle() {
+// 	// Read input voltage
+// 	read_voltage = ADC_VOLTS(ADC_IND_EXT);
+// 	// Normalize the read voltage using running average filter
+// 	static float filter_buffer_throttle[FILTER_SAMPLES];
+// 	static int filter_ptr_throttle = 0;
+// 	filter_buffer_throttle[filter_ptr_throttle++] = read_voltage;
+// 	if (filter_ptr_throttle >= FILTER_SAMPLES) {
+// 		filter_ptr_throttle = 0;
+// 	}
+// 	float pwr_filtered = 0.0;
+// 	for (int i = 0; i < FILTER_SAMPLES; i++) {
+// 		pwr_filtered += filter_buffer_throttle[i];
+// 	}
+// 	pwr_filtered /= FILTER_SAMPLES;
+// 	// Convert input voltage to throttle percentage
+// 	CurrentThrottle = utils_map(pwr_filtered, ThrottleMinVoltage, ThrottleMaxVoltage, 0.0, 1.0);
+// 	utils_truncate_number(&CurrentThrottle, 0.0, 1.0);
+// 	// Apply throttle curve depending on drive mode
+// 	// Apply maximum power curves depending on drive mode only if variable ramping is not active
+// 	// switch (drivemode) {
+// 	// case DRIVE_MODE_CRUISE:
+// 	// 	// Apply cruise mode throttle curve
+// 	// 	CurrentThrottle = ThrottleCurve_Cruise(CurrentThrottle);
+// 	// 	// Limit maximum power output based on race power curve only if we are already moving
+// 	// 	utils_truncate_number(&CurrentThrottle, 0.0, IsStarting ? 1.0 : PowerCurve_Cruise(CurrentRPM));
+// 	// 	// Set race ramping time
+// 	// 	ramp = config.Ramp_Cruise;
+// 	// 	// Set throttle deadband depending on current state
+// 	// 	deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Cruise : config.DeadBand_Cruise;
+// 	// 	break;
+// 	// case DRIVE_MODE_RACE:
+// 	// 	// Apply race mode throttle curve
+// 	// 	CurrentThrottle = ThrottleCurve_Race(CurrentThrottle);
+// 	// 	// Limit maximum power output based on race power curve only if we are already moving
+// 	// 	utils_truncate_number(&CurrentThrottle, 0.0, IsStarting ? 1.0 : PowerCurve_Race(CurrentRPM));
+// 	// 	// Set cruise ramping time
+// 	// 	ramp = config.Ramp_Race;
+// 	// 	// Set throttle deadband depending on current state
+// 	// 	deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Race : config.DeadBand_Race;
+// 	// 	break;
+// 	// }
+// 	ramp = adc.ramp_time_pos;
+// 	deadband = adc.hyst;
+// 	// Apply throttle deadband
+// 	if (CurrentThrottle < deadband) {
+// 		CurrentThrottle = 0.0;
+// 	}
+// 	// If we are starting from a standstill
+// 	// if (IsStarting) {
+// 	// 	// Smart ramping
+// 	// 	if (config.UseVariableRamping && CurrentRPM <= config.LowToHighERPM) {
+// 	// 		// Calculate variable ramp time
+// 	// 		float smart_ramp = utils_map(CurrentRPM, 0, config.LowToHighERPM, config.RampingMultiplier * ramp, ramp);
+// 	// 		// Normalize and set variable ramp time
+// 	// 		utils_truncate_number(&smart_ramp, config.RampingMultiplier * ramp, ramp);
+// 	// 		ramp = smart_ramp;
+// 	// 	}		
+// 	// 	// If we are in the slow phase of starting
+// 	// 	if (CurrentRPM <= config.LowAmpLimitERPM) {
+// 	// 		// Limit maximum current to LowAmpLimit
+// 	// 		utils_truncate_number(&CurrentThrottle, 0.0, config.LowAmpLimit / MCCONF_L_CURRENT_MAX);
+// 	// 	}
+// 	// 	// If we are in the smoothing phase of starting
+// 	// 	if (CurrentRPM > config.LowAmpLimitERPM && CurrentRPM <= config.LowToHighERPM) {
+// 	// 		// Limit maximum current with linear smoothing so it won't violently deliver maximum power after starting
+// 	// 		float max_amps = utils_map(CurrentRPM, config.LowAmpLimitERPM, config.LowToHighERPM, config.LowAmpLimit, MCCONF_L_CURRENT_MAX);
+// 	// 		if (config.UseDynamicThrottle) {
+// 	// 			// Map throttle in maximum range to avoid violent jerking
+// 	// 			CurrentThrottle = utils_map(CurrentThrottle, 0.0, 1.0, deadband, max_amps / MCCONF_L_CURRENT_MAX);
+// 	// 		}
+// 	// 		utils_truncate_number(&CurrentThrottle, 0.0, max_amps / MCCONF_L_CURRENT_MAX);
+// 	// 	}
+// 	// }
+// 	// Move throttle towards set goal with maximum step
+// 	if (CurrentThrottle < FilteredThrottle) {
+// 		//ramp = ramp * 2;
+// 		ramp = adc.ramp_time_neg; // On release move without limitations
+// 	}
+// 	utils_step_towards(&FilteredThrottle, CurrentThrottle, ramp);
+// }
 
 void ProcessThrottle() {
-	// Read input voltage
-	read_voltage = ADC_VOLTS(ADC_IND_EXT);
-	// Normalize the read voltage using running average filter
-	static float filter_buffer_throttle[FILTER_SAMPLES];
-	static int filter_ptr_throttle = 0;
-	filter_buffer_throttle[filter_ptr_throttle++] = read_voltage;
-	if (filter_ptr_throttle >= FILTER_SAMPLES) {
-		filter_ptr_throttle = 0;
+	float pwr = ADC_VOLTS(ADC_IND_EXT);
+	// Read voltage and range check
+	static float read_filter = 0.0;
+	UTILS_LP_MOVING_AVG_APPROX(read_filter, pwr, 5);
+	if (adc.use_filter) {
+		read_voltage = read_filter;
+	} else {
+		read_voltage = pwr;
 	}
-	float pwr_filtered = 0.0;
-	for (int i = 0; i < FILTER_SAMPLES; i++) {
-		pwr_filtered += filter_buffer_throttle[i];
+	range_ok = read_voltage >= 0.0 && read_voltage <= adc.voltage_max;
+	pwr = utils_map(pwr, adc.voltage_start, adc.voltage_end, 0.0, 1.0);
+	static float pwr_filter = 0.0;
+	UTILS_LP_MOVING_AVG_APPROX(pwr_filter, pwr, FILTER_SAMPLES);
+	if (adc.use_filter) {
+		pwr = pwr_filter;
+	
 	}
-	pwr_filtered /= FILTER_SAMPLES;
-	// Convert input voltage to throttle percentage
-	CurrentThrottle = utils_map(pwr_filtered, ThrottleMinVoltage, ThrottleMaxVoltage, 0.0, 1.0);
-	utils_truncate_number(&CurrentThrottle, 0.0, 1.0);
-	// Apply throttle curve depending on drive mode
-	// Apply maximum power curves depending on drive mode only if variable ramping is not active
-	// switch (drivemode) {
-	// case DRIVE_MODE_CRUISE:
-	// 	// Apply cruise mode throttle curve
-	// 	CurrentThrottle = ThrottleCurve_Cruise(CurrentThrottle);
-	// 	// Limit maximum power output based on race power curve only if we are already moving
-	// 	utils_truncate_number(&CurrentThrottle, 0.0, IsStarting ? 1.0 : PowerCurve_Cruise(CurrentRPM));
-	// 	// Set race ramping time
-	// 	ramp = config.Ramp_Cruise;
-	// 	// Set throttle deadband depending on current state
-	// 	deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Cruise : config.DeadBand_Cruise;
-	// 	break;
-	// case DRIVE_MODE_RACE:
-	// 	// Apply race mode throttle curve
-	// 	CurrentThrottle = ThrottleCurve_Race(CurrentThrottle);
-	// 	// Limit maximum power output based on race power curve only if we are already moving
-	// 	utils_truncate_number(&CurrentThrottle, 0.0, IsStarting ? 1.0 : PowerCurve_Race(CurrentRPM));
-	// 	// Set cruise ramping time
-	// 	ramp = config.Ramp_Race;
-	// 	// Set throttle deadband depending on current state
-	// 	deadband = (config.UseDynamicThrottle && IsStarting) ? config.DynamicDeadband_Race : config.DeadBand_Race;
-	// 	break;
-	// }
-	ramp = config.Ramp_Cruise;
-	deadband = config.DeadBand_Cruise;
-	// Apply throttle deadband
-	if (CurrentThrottle < deadband) {
-		CurrentThrottle = 0.0;
+	// Truncate the read voltage
+	utils_truncate_number(&pwr, 0.0, 1.0);
+	// Optionally invert the read voltage
+	if (adc.voltage_inverted) {
+		pwr = 1.0 - pwr;
 	}
-	// If we are starting from a standstill
-	// if (IsStarting) {
-	// 	// Smart ramping
-	// 	if (config.UseVariableRamping && CurrentRPM <= config.LowToHighERPM) {
-	// 		// Calculate variable ramp time
-	// 		float smart_ramp = utils_map(CurrentRPM, 0, config.LowToHighERPM, config.RampingMultiplier * ramp, ramp);
-	// 		// Normalize and set variable ramp time
-	// 		utils_truncate_number(&smart_ramp, config.RampingMultiplier * ramp, ramp);
-	// 		ramp = smart_ramp;
-	// 	}		
-	// 	// If we are in the slow phase of starting
-	// 	if (CurrentRPM <= config.LowAmpLimitERPM) {
-	// 		// Limit maximum current to LowAmpLimit
-	// 		utils_truncate_number(&CurrentThrottle, 0.0, config.LowAmpLimit / MCCONF_L_CURRENT_MAX);
-	// 	}
-	// 	// If we are in the smoothing phase of starting
-	// 	if (CurrentRPM > config.LowAmpLimitERPM && CurrentRPM <= config.LowToHighERPM) {
-	// 		// Limit maximum current with linear smoothing so it won't violently deliver maximum power after starting
-	// 		float max_amps = utils_map(CurrentRPM, config.LowAmpLimitERPM, config.LowToHighERPM, config.LowAmpLimit, MCCONF_L_CURRENT_MAX);
-	// 		if (config.UseDynamicThrottle) {
-	// 			// Map throttle in maximum range to avoid violent jerking
-	// 			CurrentThrottle = utils_map(CurrentThrottle, 0.0, 1.0, deadband, max_amps / MCCONF_L_CURRENT_MAX);
-	// 		}
-	// 		utils_truncate_number(&CurrentThrottle, 0.0, max_amps / MCCONF_L_CURRENT_MAX);
-	// 	}
-	// }
-	// Move throttle towards set goal with maximum step
-	if (CurrentThrottle < FilteredThrottle) {
-		//ramp = ramp * 2;
-		ramp = 1.0; // On release move without limitations
-	}
-	utils_step_towards(&FilteredThrottle, CurrentThrottle, ramp);
-}
+	// Apply deadband
+	utils_deadband(&pwr, adc.hyst, 1.0);
+	pwr = utils_throttle_curve(pwr, adc.throttle_exp, adc.throttle_exp_brake, adc.throttle_exp_mode);
+	
+	// Apply ramping
+	static systime_t last_time = 0;
+	static float pwr_ramp = 0.0;
+	float ramp_time = fabsf(pwr) > fabsf(pwr_ramp) ? adc.ramp_time_pos : adc.ramp_time_neg;
 
-
-void ProcessPower() {
-	// Read power sent to the motor and calculate peak value for the last 3 seconds
-	#define AverageSize 20
-	#define PeakMS 3000
-	static int AverageIndex = 0;
-	float CurrentPower = mc_interface_get_tot_current_filtered() * GET_INPUT_VOLTAGE();
-	static int PowerBuffer[PeakMS / AverageSize];
-	static int PowerIndex = 0;
-	static int AverageBuffer[AverageSize];
-	AverageBuffer[AverageIndex++] = CurrentPower;
-	if (AverageIndex >= AverageSize) {
-		AverageIndex = 0;
-		float Average = 0;
-		for (int i = 0; i < AverageSize; i++) {
-			Average += AverageBuffer[i];
-		}
-		Average /= AverageSize;
-		PowerBuffer[PowerIndex++] = Average;
-		if (PowerIndex >= PeakMS / AverageSize) {
-			PowerIndex = 0;
-		}
-		int MaxPower = 0;
-		for (int i = 0 ; i < PeakMS / AverageSize; i++) {
-			if (PowerBuffer[i] > MaxPower) {
-				MaxPower = PowerBuffer[i];
-			}
-		}
-		PeakPower = MaxPower;
+	if (ramp_time > 0.01) {
+		const float ramp_step = (float)ST2MS(chVTTimeElapsedSinceX(last_time)) / (ramp_time * 1000.0);
+		utils_step_towards(&pwr_ramp, pwr, ramp_step);
+		last_time = chVTGetSystemTimeX();
+		pwr = pwr_ramp;
 	}
+	
+	
+	
+	
+	
+	
+	CurrentThrottle = pwr;
 }
 
 void DoBlink() {
@@ -340,17 +331,17 @@ void DoBlink() {
 				// Reset battery indicator
 				BlinksLeft = 0;
 				// Depending on race mode blink LED or keep it off
-				switch (drivemode) {
-				case DRIVE_MODE_CRUISE:
-					THROTTLE_LED_OFF();
-					break;
-				case DRIVE_MODE_RACE:
-					// Blinking while battery is low will hide low battery error
-					if (!LowBattery) {
-						FastBlink();
-					}
-					break;
-				}
+				// switch (drivemode) {
+				// case DRIVE_MODE_CRUISE:
+				// 	THROTTLE_LED_OFF();
+				// 	break;
+				// case DRIVE_MODE_RACE:
+				// 	// Blinking while battery is low will hide low battery error
+				// 	if (!LowBattery) {
+				// 		FastBlink();
+				// 	}
+				// 	break;
+				// }
 				FastBlink();
 			}
 		}
@@ -364,27 +355,6 @@ void DoBlink() {
 		// FaultBlink();
 		LowBatteryBlink();
 	}
-}
-
-void PowerCruise() {
-	static int LastPower = 100;
-	static bool Active = false;
-	if (CruiseControlActive && !Active) {
-		LastPower = 0;
-		Active = true;
-	}
-	if (!CruiseControlActive && Active) {
-		Active = false;
-	}
-	#define PowerCruiseRamp 0.0008
-	int TargetPower = PeakPower;
-	if (TargetPower > 100.0) {
-		utils_truncate_number(&TargetPower, 100.0, config.MaxCruisePower);
-		utils_step_towards(&LastPower, TargetPower, PowerCruiseRamp);
-		float RequiredCurrent = (float)LastPower / (float)GET_INPUT_VOLTAGE();
-		utils_truncate_number(&RequiredCurrent, 2.0, 15.0);
-		mc_interface_set_current(RequiredCurrent);
-	}	
 }
 
 void DoControl() {
@@ -415,16 +385,12 @@ void DoControl() {
 				// Lock motor until throttle input is active again
 				StopMotor();
 			}
-			// Added to override the PID cruise control
-			if (config.UsePowerCruise) {
-				PowerCruise();
-			}
 		} else {
 			// If throttle input is active
 			if (FilteredThrottle > 0.01) {
 				if (CurrentRPM >= config.NegativeERPMLimit) {
 					// Give power to motor
-					mc_interface_set_current(FilteredThrottle * C_MaxCurrent);
+					mc_interface_set_current_rel(FilteredThrottle);
 				} else {
 					// Stop motor below negative ERPM limit to avoid reverse braking
 					StopMotor();
@@ -440,13 +406,12 @@ void DoControl() {
 			}
 		}
 	}
-	// If motor drops below minimum ERPMs and no throttle is applied
-	if (FilteredThrottle < 0.01 && CurrentRPM < config.CruiseControlERPM) {
-		// Lock motor
-		StopMotor();
-	}
+	// // If motor drops below minimum ERPMs and no throttle is applied
+	// if (FilteredThrottle < 0.01 && CurrentRPM < config.CruiseControlERPM) {
+	// 	// Lock motor
+	// 	StopMotor();
+	// }
 }
-
 
 static THD_FUNCTION(my_thread, arg) {
 	(void)arg;
@@ -473,20 +438,6 @@ static THD_FUNCTION(my_thread, arg) {
 
 		// Process throttle input
 		// ProcessThrottle();
-		float pwr = ADC_VOLTS(ADC_IND_EXT);
-		// Read voltage and range check
-		static float read_filter = 0.0;
-		UTILS_LP_MOVING_AVG_APPROX(read_filter, pwr, 5);
-		read_voltage = read_filter;
-		pwr = utils_map(pwr, ThrottleMinVoltage, ThrottleMaxVoltage, 0.0, 1.0);
-		static float pwr_filter = 0.0;
-		UTILS_LP_MOVING_AVG_APPROX(pwr_filter, pwr, FILTER_SAMPLES);
-		pwr = pwr_filter;
-		// Truncate the read voltage
-		utils_truncate_number(&pwr, 0.0, 1.0);
-		// Apply deadband
-		utils_deadband(&pwr, C_DeadBand_Cruise, 1.0);
-		CurrentThrottle = pwr;
 
 		// if (config.UsePowerCruise && !CruiseControlActive) {
 		// 	// Process applied power for power cruise control
@@ -495,13 +446,22 @@ static THD_FUNCTION(my_thread, arg) {
 		// Blink the LED based on current status
 		DoBlink();
 
+		if (app_is_output_disabled()) {
+			continue;
+		}
+
+		if (!(ms_without_power < MIN_MS_WITHOUT_POWER && adc.safe_start) && !range_ok) {
+			// Control?
+			// TODO: Fix this conditions Where the ms updates?
+		}
+
 		// if (mc_interface_get_fault() == FAULT_CODE_NONE) {
 			// Control motor only if no faults are present
 			// DoControl();
 			// If throttle input is active
-			if (pwr > 0.01) {
+			if (CurrentThrottle > 0.001) {
 					StartMotor();
-					mc_interface_set_current_rel(pwr);
+					mc_interface_set_current_rel(CurrentThrottle);
 			} else {
 				if (CurrentRPM > C_MinIdleRPM) {
 					// Give minimum amperage above minimum ERPM

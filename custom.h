@@ -1,23 +1,14 @@
 #ifndef CUSTOM_H_
 #define CUSTOM_H_
 
-#define RefreshRate			    1000		// The refresh rate of the custom application in Hertz
-
 // Cruise control settings
 //
-#define C_CruiseControlERPM	    10000.0	// ERPM limit below which cruise control deactivates
+// #define C_CruiseControlERPM	    10000.0	// ERPM limit below which cruise control deactivates
 #define C_NegativeERPMLimit	    -10000.0	// Negative ERPM limit below which motor will stop
-
-#define C_UsePowerCruise		false
-#define C_MaxCruisePower		500 // Watts
 
 // Throttle settings
 //
-#define C_UseDriveModes		    true
-#define C_DefaultDriveMode	    DRIVE_MODE_CRUISE
-// Fraction of throttle to deadband in each drive mode 
 #define C_DeadBand_Cruise		0.04	// Ignore until 4% of throttle
-#define C_DeadBand_Race		    0.06	// Ignore until 6% of throttle
 // Throttle ramping variables
 #define C_LowAmpLimitERPM		3500	// Limit Amps below this ERPM limit to avoid motor cogging
 #define C_LowAmpLimit			12.0	// Maximum Amps to use below #LowAmpLimitERPM
@@ -32,18 +23,12 @@
 // Calculate using formula below 
 // DesiredTime = 1.0 / DesiredLength (in mS for 1kHz set frequency)
 #define C_Ramp_Cruise			0.005		// 500ms for 0.0->1.0
-#define C_Ramp_Race			    0.010       // 333ms for 0.0->1.0
 // Dynamic throttle response expands the useful range of the throttle while
 //		limiting power to allow better control over the limited throttle range
 #define C_UseDynamicThrottle	    true
-// Experimental
-#define C_UseDynamicPower		    true
-#define C_DynamicDeadband_Cruise    0.12
-#define C_DynamicDeadband_Race	    0.16
 
 #define C_MinIdleRPM            5000	// Minimum ERPM to consider motor running
 #define C_IdleCurrentLimit		5.0		// Idle Current Amps
-#define C_MaxCurrent 120.0
 
 // Button settings
 //
@@ -58,7 +43,6 @@
 #define AllowTimeoutPress	true	// Allow continuous press
 #define ButtonTimeout		3500	// Maximum button hold time at which continuous press is triggered (in mS)
 
-
 // LED Indicator settings
 //
 // Battery indicator
@@ -71,21 +55,17 @@
 #define FastBlinkDelay			200		// How long the LED stays on/off while fast blinking (in mS)
 #define BlinkDelay	            500 	// How long the LED stays on/off while low battery blinking (in mS)
 
-
 // Default constants
 //
-#define FILTER_SAMPLES					5
-#define RPM_FILTER_SAMPLES				35
-#define BATTERY_FILTER_SAMPLES			5
-#define TEMP_FILTER_SAMPLES				5
-
-
+// #define FILTER_SAMPLES					5
+// #define RPM_FILTER_SAMPLES				35
+// #define BATTERY_FILTER_SAMPLES			5
+// #define TEMP_FILTER_SAMPLES				5
 
 // LED Macros
 //
 #define THROTTLE_LED_ON()		palSetPad(GPIOC, 10)		// Set pin PB7 to logical high
 #define THROTTLE_LED_OFF()		palClearPad(GPIOC, 10)	// Set pin PB7 to logical low
-
 
 // Function declarations
 //
