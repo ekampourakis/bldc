@@ -705,19 +705,19 @@ typedef enum {
 } drive_modes;
 
 typedef struct {
-	int CruiseControlERPM;
-	int NegativeERPMLimit;
+	// int CruiseControlERPM;
+	// int NegativeERPMLimit;
 	// bool UsePowerCruise;
 	// int MaxCruisePower;
 	// bool UseDriveModes;
 	// drive_modes DefaultDriveMode;
 	// float DeadBand_Cruise;
 	// float DeadBand_Race;
-	int LowAmpLimitERPM; 
-	float LowAmpLimit;
-	int LowToHighERPM;
-	bool UseVariableRamping;
-	float RampingMultiplier;
+	// int LowAmpLimitERPM; 
+	// float LowAmpLimit;
+	// int LowToHighERPM;
+	// bool UseVariableRamping;
+	// float RampingMultiplier;
 	// float Ramp_Cruise;
 	// float Ramp_Race;
 	// bool UseDynamicThrottle;

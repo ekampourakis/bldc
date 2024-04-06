@@ -5,7 +5,6 @@
 //
 // #define C_CruiseControlERPM	    10000.0	// ERPM limit below which cruise control deactivates
 #define C_NegativeERPMLimit	    -10000.0	// Negative ERPM limit below which motor will stop
-
 // Throttle settings
 //
 #define C_DeadBand_Cruise		0.04	// Ignore until 4% of throttle
@@ -22,19 +21,17 @@
 // The smaller the step the longer it will take to increase throttle
 // Calculate using formula below 
 // DesiredTime = 1.0 / DesiredLength (in mS for 1kHz set frequency)
-#define C_Ramp_Cruise			0.005		// 500ms for 0.0->1.0
+// #define C_Ramp_Cruise			0.005		// 500ms for 0.0->1.0
 // Dynamic throttle response expands the useful range of the throttle while
 //		limiting power to allow better control over the limited throttle range
-#define C_UseDynamicThrottle	    true
-
+// #define C_UseDynamicThrottle	    true
 #define C_MinIdleRPM            5000	// Minimum ERPM to consider motor running
 #define C_IdleCurrentLimit		5.0		// Idle Current Amps
-
 // Button settings
 //
 #define ButtonMaxVoltage	0.3		// Below that voltage button is considered pressed
-#define ThrottleMinVoltage	1.0		// Zero level of throttle
-#define ThrottleMaxVoltage	2.5		// Full level of throttle
+// #define ThrottleMinVoltage	1.0		// Zero level of throttle
+// #define ThrottleMaxVoltage	2.5		// Full level of throttle
 #define ShortPressTime		40		// Minimum time at which a short press is triggered (in mS)
 #define MaxShortPressTime	400		// Maximum time at which a short press is triggered (in mS)
 #define AllowLongPress		true	// Allow long press
@@ -42,9 +39,8 @@
 #define MaxLongPressTime	2800	// Maximum time at which a long press is triggered (in mS)
 #define AllowTimeoutPress	true	// Allow continuous press
 #define ButtonTimeout		3500	// Maximum button hold time at which continuous press is triggered (in mS)
-
 // LED Indicator settings
-//
+// 
 // Battery indicator
 #define Battery4Blinks			47.5	// 4 blinks till this voltage
 #define Battery3Blinks			45.0	// 3 blinks till this voltage

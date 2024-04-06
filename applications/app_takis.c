@@ -65,7 +65,7 @@ static volatile bool range_ok;
 // Called when the custom application is started. Start our
 // threads here and set up callbacks.
 void app_custom_start(void) {
-	mc_interface_set_pwm_callback(pwm_callback);
+	// mc_interface_set_pwm_callback(pwm_callback);
 
 	stop_now = false;
 	chThdCreateStatic(my_thread_wa, sizeof(my_thread_wa),
@@ -82,7 +82,7 @@ void app_custom_start(void) {
 // Called when the custom application is stopped. Stop our threads
 // and release callbacks.
 void app_custom_stop(void) {
-	mc_interface_set_pwm_callback(0);
+	// mc_interface_set_pwm_callback(0);
 	terminal_unregister_callback(terminal_test);
 
 	stop_now = true;
@@ -111,6 +111,7 @@ bool ProcessThread() {
 	// For safe start when fault codes occur
 	if (mc_interface_get_fault() != FAULT_CODE_NONE && adc.safe_start != SAFE_START_NO_FAULT) {
 		ms_without_power = 0;
+		StopMotor();
 	}
 
 	// If thread must be stopped
@@ -166,26 +167,31 @@ void ProcessBattery() {
 }
 
 void ProcessRPM() {
-	// Read and normalize current ERPM value using running average filter
-	static float filter_buffer_rpm[RPM_FILTER_SAMPLES];
-	static int filter_ptr_rpm = 0;
-	filter_buffer_rpm[filter_ptr_rpm++] = mc_interface_get_rpm();
-	if (filter_ptr_rpm >= RPM_FILTER_SAMPLES) {
-		filter_ptr_rpm = 0;
-	}
-	float rpm_filtered = 0.0;
-	for (int i = 0; i < RPM_FILTER_SAMPLES; i++) {
-		rpm_filtered += filter_buffer_rpm[i];
-	}
-	CurrentRPM = (rpm_filtered / RPM_FILTER_SAMPLES);
+	// // Read and normalize current ERPM value using running average filter
+	// static float filter_buffer_rpm[RPM_FILTER_SAMPLES];
+	// static int filter_ptr_rpm = 0;
+	// filter_buffer_rpm[filter_ptr_rpm++] = mc_interface_get_rpm();
+	// if (filter_ptr_rpm >= RPM_FILTER_SAMPLES) {
+	// 	filter_ptr_rpm = 0;
+	// }
+	// float rpm_filtered = 0.0;
+	// for (int i = 0; i < RPM_FILTER_SAMPLES; i++) {
+	// 	rpm_filtered += filter_buffer_rpm[i];
+	// }
+	// CurrentRPM = (rpm_filtered / RPM_FILTER_SAMPLES);
+
+	static float rpm_filtered = 0.0;
+	UTILS_LP_MOVING_AVG_APPROX(rpm_filtered, mc_interface_get_rpm(), RPM_FILTER_SAMPLES);
+	CurrentRPM = rpm_filtered;
+
 	// If current ERPM climb above starting limit then we are no longer starting
-	if (IsStarting && CurrentRPM > config.LowToHighERPM) {
+	if (IsStarting && CurrentRPM > C_LowToHighERPM) {
 		IsStarting = false;
 	}
 	// If current ERPM drop below starting threshold then switch to starting mode
-	if (!IsStarting && CurrentRPM < ((config.LowAmpLimitERPM + config.LowToHighERPM) / 2)) {
+	if (!IsStarting && CurrentRPM < ((C_LowAmpLimitERPM + C_LowToHighERPM) / 2)) {
 		IsStarting = true;
-		StopMotor();
+		// StopMotor();
 	}
 }
 
@@ -205,8 +211,8 @@ void ProcessRPM() {
 // 	}
 // 	pwr_filtered /= FILTER_SAMPLES;
 // 	// Convert input voltage to throttle percentage
-// 	CurrentThrottle = utils_map(pwr_filtered, ThrottleMinVoltage, ThrottleMaxVoltage, 0.0, 1.0);
-// 	utils_truncate_number(&CurrentThrottle, 0.0, 1.0);
+// 	CurrentThrottle = utils_map(pwr_filtered, ThrottleMutils_truncate_number(&CurrentThrottle, 0.0, 1.0);inVoltage, ThrottleMaxVoltage, 0.0, 1.0);
+// 	
 // 	// Apply throttle curve depending on drive mode
 // 	// Apply maximum power curves depending on drive mode only if variable ramping is not active
 // 	// switch (drivemode) {
@@ -240,22 +246,22 @@ void ProcessRPM() {
 // 	// If we are starting from a standstill
 // 	// if (IsStarting) {
 // 	// 	// Smart ramping
-// 	// 	if (config.UseVariableRamping && CurrentRPM <= config.LowToHighERPM) {
+// 	// 	if (config.UseVariableRamping && CurrentRPM <= C_LowToHighERPM) {
 // 	// 		// Calculate variable ramp time
-// 	// 		float smart_ramp = utils_map(CurrentRPM, 0, config.LowToHighERPM, config.RampingMultiplier * ramp, ramp);
+// 	// 		float smart_ramp = utils_map(CurrentRPM, 0, C_LowToHighERPM, config.RampingMultiplier * ramp, ramp);
 // 	// 		// Normalize and set variable ramp time
 // 	// 		utils_truncate_number(&smart_ramp, config.RampingMultiplier * ramp, ramp);
 // 	// 		ramp = smart_ramp;
 // 	// 	}		
 // 	// 	// If we are in the slow phase of starting
-// 	// 	if (CurrentRPM <= config.LowAmpLimitERPM) {
+// 	// 	if (CurrentRPM <= C_LowAmpLimitERPM) {
 // 	// 		// Limit maximum current to LowAmpLimit
-// 	// 		utils_truncate_number(&CurrentThrottle, 0.0, config.LowAmpLimit / MCCONF_L_CURRENT_MAX);
+// 	// 		utils_truncate_number(&CurrentThrottle, 0.0, C_LowAmpLimit / MCCONF_L_CURRENT_MAX);
 // 	// 	}
 // 	// 	// If we are in the smoothing phase of starting
-// 	// 	if (CurrentRPM > config.LowAmpLimitERPM && CurrentRPM <= config.LowToHighERPM) {
+// 	// 	if (CurrentRPM > C_LowAmpLimitERPM && CurrentRPM <= C_LowToHighERPM) {
 // 	// 		// Limit maximum current with linear smoothing so it won't violently deliver maximum power after starting
-// 	// 		float max_amps = utils_map(CurrentRPM, config.LowAmpLimitERPM, config.LowToHighERPM, config.LowAmpLimit, MCCONF_L_CURRENT_MAX);
+// 	// 		float max_amps = utils_map(CurrentRPM, C_LowAmpLimitERPM, C_LowToHighERPM, C_LowAmpLimit, MCCONF_L_CURRENT_MAX);
 // 	// 		if (config.UseDynamicThrottle) {
 // 	// 			// Map throttle in maximum range to avoid violent jerking
 // 	// 			CurrentThrottle = utils_map(CurrentThrottle, 0.0, 1.0, deadband, max_amps / MCCONF_L_CURRENT_MAX);
@@ -282,12 +288,15 @@ void ProcessThrottle() {
 		read_voltage = pwr;
 	}
 	range_ok = read_voltage >= 0.0 && read_voltage <= adc.voltage_max;
+	if (!range_ok) {
+		CurrentThrottle = 0.0;
+		return;
+	}
 	pwr = utils_map(pwr, adc.voltage_start, adc.voltage_end, 0.0, 1.0);
 	static float pwr_filter = 0.0;
 	UTILS_LP_MOVING_AVG_APPROX(pwr_filter, pwr, FILTER_SAMPLES);
 	if (adc.use_filter) {
 		pwr = pwr_filter;
-	
 	}
 	// Truncate the read voltage
 	utils_truncate_number(&pwr, 0.0, 1.0);
@@ -304,18 +313,32 @@ void ProcessThrottle() {
 	static float pwr_ramp = 0.0;
 	float ramp_time = fabsf(pwr) > fabsf(pwr_ramp) ? adc.ramp_time_pos : adc.ramp_time_neg;
 
+	if (IsStarting) {
+		// Do Smart Ramping if the bike is starting now
+		if (C_UseVariableRamping && CurrentRPM <= C_LowToHighERPM) {
+			// Calculate variable ramp time
+			float smart_ramp = utils_map(CurrentRPM, 0, C_LowToHighERPM, ramp_time, C_RampingMultiplier * ramp_time);
+			// Normalize and set variable ramp time
+			utils_truncate_number(&smart_ramp, C_RampingMultiplier * ramp_time, ramp_time);
+			ramp_time = smart_ramp;
+		}
+		if (CurrentRPM <= C_LowAmpLimitERPM) {
+			// Limit maximum current to LowAmpLimit
+			// 0.0 means 0A and 1.0 means max current
+			utils_truncate_number(&pwr, 0.0, C_LowAmpLimit / mc_interface_get_configuration()->l_current_max);
+		}
+		if (CurrentRPM > C_LowAmpLimitERPM && CurrentRPM <= C_LowToHighERPM) {
+			// Limit maximum current with linear smoothing so it won't violently deliver maximum power after starting
+			float max_amps = utils_map(CurrentRPM, C_LowAmpLimitERPM, C_LowToHighERPM, C_LowAmpLimit, mc_interface_get_configuration()->l_current_max);
+			utils_truncate_number(&pwr, 0.0, max_amps / mc_interface_get_configuration()->l_current_max);
+		}
+	}
 	if (ramp_time > 0.01) {
 		const float ramp_step = (float)ST2MS(chVTTimeElapsedSinceX(last_time)) / (ramp_time * 1000.0);
 		utils_step_towards(&pwr_ramp, pwr, ramp_step);
 		last_time = chVTGetSystemTimeX();
 		pwr = pwr_ramp;
 	}
-	
-	
-	
-	
-	
-	
 	CurrentThrottle = pwr;
 }
 
@@ -346,7 +369,7 @@ void DoBlink() {
 			}
 		}
 		else {
-			// On low battery kepp the LED on to indicate low battery
+			// On low battery keep the LED on to indicate low battery
 			LowBatteryBlink();
 		}
 	}
@@ -358,6 +381,19 @@ void DoBlink() {
 }
 
 void DoControl() {
+// if (CurrentThrottle > 0.001) {
+// 		StartMotor();
+// 		mc_interface_set_current_rel(CurrentThrottle);
+// } else {
+// 	if (CurrentRPM > C_MinIdleRPM) {
+// 		// Give minimum amperage above minimum ERPM
+// 		mc_interface_set_current(C_IdleCurrentLimit);
+// 	} else {
+// 		// Lock motor in case of ERPM drop
+// 		StopMotor();
+// 	}
+// }
+
 	// If motor is locked
 	if (MotorStopped || SoftLock) {
 		// Deactivate cruise control
@@ -372,7 +408,7 @@ void DoControl() {
 			}
 		} else {
 			// If throttle input is active and battery is not empty
-			if (FilteredThrottle > 0.01 && !LowBattery) {
+			if (FilteredThrottle > 0.001 && !LowBattery) {
 				// Unlock the motor
 				StartMotor();
 			}
@@ -380,15 +416,16 @@ void DoControl() {
 	} else {
 		if (CruiseControlActive) {
 			// Stop cruise control on throttle input or on low RPMs
-			if (FilteredThrottle > 0.01 || CurrentRPM < config.CruiseControlERPM) {
+			if (FilteredThrottle > 0.001 || CurrentRPM < mc_interface_get_configuration()->s_pid_min_erpm) {
 				CruiseControlActive = false;
 				// Lock motor until throttle input is active again
 				StopMotor();
+				SoftLock = false;
 			}
 		} else {
 			// If throttle input is active
-			if (FilteredThrottle > 0.01) {
-				if (CurrentRPM >= config.NegativeERPMLimit) {
+			if (FilteredThrottle > 0.001) {
+				if (CurrentRPM >= C_NegativeERPMLimit) {
 					// Give power to motor
 					mc_interface_set_current_rel(FilteredThrottle);
 				} else {
@@ -425,7 +462,7 @@ static THD_FUNCTION(my_thread, arg) {
 		if (!ProcessThread()) return;
 
 		// Process button patterns
-		// ProcessButtons();
+		ProcessButtons();
 
 		// Measure battery level
 		ProcessBattery();
@@ -437,7 +474,7 @@ static THD_FUNCTION(my_thread, arg) {
 		// ProcessTemperature();
 
 		// Process throttle input
-		// ProcessThrottle();
+		ProcessThrottle();
 
 		// if (config.UsePowerCruise && !CruiseControlActive) {
 		// 	// Process applied power for power cruise control
@@ -450,27 +487,28 @@ static THD_FUNCTION(my_thread, arg) {
 			continue;
 		}
 
-		if (!(ms_without_power < MIN_MS_WITHOUT_POWER && adc.safe_start) && !range_ok) {
+		if (ms_without_power > MIN_MS_WITHOUT_POWER || adc.safe_start == SAFE_START_DISABLED) {
 			// Control?
 			// TODO: Fix this conditions Where the ms updates?
+			DoControl();
 		}
 
 		// if (mc_interface_get_fault() == FAULT_CODE_NONE) {
 			// Control motor only if no faults are present
 			// DoControl();
 			// If throttle input is active
-			if (CurrentThrottle > 0.001) {
-					StartMotor();
-					mc_interface_set_current_rel(CurrentThrottle);
-			} else {
-				if (CurrentRPM > C_MinIdleRPM) {
-					// Give minimum amperage above minimum ERPM
-					mc_interface_set_current(C_IdleCurrentLimit);
-				} else {
-					// Lock motor in case of ERPM drop
-					StopMotor();
-				}
-			}
+			// if (CurrentThrottle > 0.001) {
+			// 		StartMotor();
+			// 		mc_interface_set_current_rel(CurrentThrottle);
+			// } else {
+			// 	if (CurrentRPM > C_MinIdleRPM) {
+			// 		// Give minimum amperage above minimum ERPM
+			// 		mc_interface_set_current(C_IdleCurrentLimit);
+			// 	} else {
+			// 		// Lock motor in case of ERPM drop
+			// 		StopMotor();
+			// 	}
+			// }
 		// }
 
 		// Reset thread timeout. Used to avoid blocking threads.
