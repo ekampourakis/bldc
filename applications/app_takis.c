@@ -42,11 +42,9 @@ static float deadband = 0.0;				// Deadband value is calculated on runtime
 static float ramp = 0.0;					// Ramping time is calculated on runtime
 static bool CruiseControlActive = false;	// Cruise control off on boot
 static volatile float CurrentThrottle = 0.0;			// Consider throttle depressed on boot
-static float FilteredThrottle = 0.0;
 static float BatteryLevel = 1.0;			// Consider battery full on boot
 static bool LowBattery = false;
 static bool MotorStopped = true;			// Consider motor locked on boot
-static bool PreviousFault = true;			// Consider fault codes cleared on boot
 static bool IsStarting = true;				// Consider motor stopped on boot
 static float CurrentRPM = 0.0;
 static int CruiseRPM = 0;
@@ -107,7 +105,6 @@ bool ProcessThread() {
 	if (fabsf(CurrentThrottle) < 0.001) {
 		ms_without_power += (1000.0 * (float)sleep_time) / (float)CH_CFG_ST_FREQUENCY;
 	}
-
 	// For safe start when fault codes occur
 	if (mc_interface_get_fault() != FAULT_CODE_NONE && adc.safe_start != SAFE_START_NO_FAULT) {
 		ms_without_power = 0;
@@ -356,7 +353,7 @@ void DoBlink() {
 				// Depending on race mode blink LED or keep it off
 				// switch (drivemode) {
 				// case DRIVE_MODE_CRUISE:
-				// 	THROTTLE_LED_OFF();
+					THROTTLE_LED_OFF();
 				// 	break;
 				// case DRIVE_MODE_RACE:
 				// 	// Blinking while battery is low will hide low battery error
@@ -365,7 +362,8 @@ void DoBlink() {
 				// 	}
 				// 	break;
 				// }
-				FastBlink();
+				// FastBlink();
+
 			}
 		}
 		else {
@@ -402,13 +400,13 @@ void DoControl() {
 		}
 		if (SoftLock) {
 			// If throttle input is above limit and battery is not empty or timeout passed
-			if ((FilteredThrottle > SoftLockUnlock || (float)ST2MS(chVTTimeElapsedSinceX(LastSoftLock)) > SoftLockDelay) && !LowBattery) {
+			if ((CurrentThrottle > SoftLockUnlock || (float)ST2MS(chVTTimeElapsedSinceX(LastSoftLock)) > SoftLockDelay) && !LowBattery) {
 				// Unlock the motor
 				StartMotor();
 			}
 		} else {
 			// If throttle input is active and battery is not empty
-			if (FilteredThrottle > 0.001 && !LowBattery) {
+			if (CurrentThrottle > 0.001 && !LowBattery) {
 				// Unlock the motor
 				StartMotor();
 			}
@@ -416,7 +414,7 @@ void DoControl() {
 	} else {
 		if (CruiseControlActive) {
 			// Stop cruise control on throttle input or on low RPMs
-			if (FilteredThrottle > 0.001 || CurrentRPM < mc_interface_get_configuration()->s_pid_min_erpm) {
+			if (CurrentThrottle > 0.001 || CurrentRPM < mc_interface_get_configuration()->s_pid_min_erpm) {
 				CruiseControlActive = false;
 				// Lock motor until throttle input is active again
 				StopMotor();
@@ -424,10 +422,10 @@ void DoControl() {
 			}
 		} else {
 			// If throttle input is active
-			if (FilteredThrottle > 0.001) {
+			if (CurrentThrottle > 0.001) {
 				if (CurrentRPM >= C_NegativeERPMLimit) {
 					// Give power to motor
-					mc_interface_set_current_rel(FilteredThrottle);
+					mc_interface_set_current_rel(CurrentThrottle);
 				} else {
 					// Stop motor below negative ERPM limit to avoid reverse braking
 					StopMotor();
@@ -481,11 +479,12 @@ static THD_FUNCTION(my_thread, arg) {
 		// 	ProcessPower();
 		// }
 		// Blink the LED based on current status
-		DoBlink();
-
 		if (app_is_output_disabled()) {
 			continue;
 		}
+
+		DoBlink();
+
 
 		if (ms_without_power > MIN_MS_WITHOUT_POWER || adc.safe_start == SAFE_START_DISABLED) {
 			// Control?
@@ -550,6 +549,10 @@ static void terminal_test(int argc, const char **argv) {
 		case 4:
 			// Do something else
 			commands_printf("Current RPM: %.2f", CurrentRPM);
+			break;
+		case 6:
+			commands_printf("MotorStopped: %d, IsStarting: %d, SoftLock: %d, CruiseControlActive: %d, LowBattery: %d, PreviousFault: %d",
+				MotorStopped, IsStarting, SoftLock, CruiseControlActive, LowBattery);
 			break;
 		case 5:
 			// Do something else

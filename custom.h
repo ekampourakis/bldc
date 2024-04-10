@@ -26,7 +26,7 @@
 //		limiting power to allow better control over the limited throttle range
 // #define C_UseDynamicThrottle	    true
 #define C_MinIdleRPM            5000	// Minimum ERPM to consider motor running
-#define C_IdleCurrentLimit		5.0		// Idle Current Amps
+#define C_IdleCurrentLimit		4.5		// Idle Current Amps
 // Button settings
 //
 #define ButtonMaxVoltage	0.3		// Below that voltage button is considered pressed
